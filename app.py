@@ -1,93 +1,3 @@
-import asyncio
-import json
-import threading
-import websockets
-from flask import Flask, jsonify, render_template_string
-
-app = Flask(__name__)
-
-# قاعدة البيانات اللحظية للمنصة
-market_data = {
-    "price": 0.0,
-    "trend": "جاري التحليل...",
-    "signal": "انتظار",
-    "tp": 0.0,
-    "sl": 0.0
-}
-
-price_history = []
-WINDOW_SIZE = 8  # سرعة استجابة الخوارزمية للحركة اللحظية
-
-def calculate_trend_and_signals(current_price):
-    global price_history
-    price_history.append(current_price)
-    
-    if len(price_history) > WINDOW_SIZE:
-        price_history.pop(0)
-        
-    if len(price_history) < WINDOW_SIZE:
-        return "جاري جمع البيانات...", "انتظار", 0.0, 0.0
-
-    avg_price = sum(price_history) / len(price_history)
-    
-    # إدارة مخاطر صارمة: 1% وقف خسارة و 2% هدف جني أرباح لحماية الأموال
-    risk_percentage = 0.01 
-    reward_percentage = 0.02
-
-    if current_price > avg_price:
-        trend = "صاعد 📈"
-        signal = "شراء (BUY) 🟢"
-        sl = current_price * (1 - risk_percentage)
-        tp = current_price * (1 + reward_percentage)
-    elif current_price < avg_price:
-        trend = "هابط 📉"
-        signal = "بيع (SELL) 🔴"
-        sl = current_price * (1 + risk_percentage)
-        tp = current_price * (1 - reward_percentage)
-    else:
-        trend = "مستقر ⚖️"
-        signal = "انتظار"
-        tp, sl = 0.0, 0.0
-
-    return trend, signal, round(tp, 2), round(sl, 2)
-
-async def btc_stream():
-    # الاتصال المباشر بـ WebSocket الخاص بمنصة Binance لجلب أسعار البيتكوين الحية
-    uri = "wss://stream.binance.com:9443/ws/btcusdt@ticker"
-    while True:
-        try:
-            async with websockets.connect(uri) as websocket:
-                while True:
-                    response = await websocket.recv()
-                    data = json.loads(response)
-                    current_price = float(data['c'])
-                    
-                    trend, signal, tp, sl = calculate_trend_and_signals(current_price)
-                    
-                    market_data["price"] = current_price
-                    market_data["trend"] = trend
-                    market_data["signal"] = signal
-                    market_data["tp"] = tp
-                    market_data["sl"] = sl
-                    
-                    await asyncio.sleep(0.5)
-        except Exception as e:
-            await asyncio.sleep(3)
-
-def start_websocket_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(btc_stream())
-
-threading.Thread(target=start_websocket_thread, daemon=True).start()
-
-# المسار المصلح ليتوافق مع طلب الواجهة تلقائياً لمنع خطأ 404
-@app.route('/api/market-data')
-def get_data():
-    return jsonify(market_data)
-
-# واجهة المستخدم الاحترافية بتصميم Dark Mode الفاخر القابل للبيع لزملائك
-HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -111,46 +21,81 @@ HTML_TEMPLATE = """
 <body>
     <div class="container">
         <h1>MAX SYSTEM v1.0</h1>
-        <p style="color: #848e9c; margin: 0; font-size: 10pt;">منصة التحليل الذكي وبث الأسعار اللحظي</p>
+        <p style="color: #848e9c; margin: 0; font-size: 10pt;">منصة التحليل الذكي المستقلة بالكامل</p>
         
         <div class="price-box">
             <div style="color: #848e9c; font-size: 10pt;">سعر BTC/USDT اللحظي</div>
             <div id="price" class="price">0.00</div>
-            <div id="badge" class="badge buy">جاري الاتصال...</div>
+            <div id="badge" class="badge">جاري الاتصال بالبورصة...</div>
         </div>
         
         <div class="info-row"><span class="label">الاتجاه الحالي:</span><span id="trend" class="val">--</span></div>
         <div class="info-row"><span class="label">جني الأرباح (TP):</span><span id="tp" class="val" style="color: #0ecb81;">0.00</span></div>
         <div class="info-row"><span class="label">إيقاف الخسارة (SL):</span><span id="sl" class="val" style="color: #f6465d;">0.00</span></div>
-        <div class="info-row"><span class="label">حالة السيرفر:</span><span style="color: #0ecb81; font-weight: bold;">نشط 🟢</span></div>
+        <div class="info-row"><span class="label">حالة المنصة:</span><span id="status" style="color: #0ecb81; font-weight: bold;">جاري ربط الويب سوكت...</span></div>
     </div>
 
     <script>
-        async function refresh() {
-            try {
-                const res = await fetch('/api/market-data');
-                const data = await res.json();
-                document.getElementById('price').innerText = data.price.toLocaleString();
-                document.getElementById('trend').innerText = data.trend;
-                document.getElementById('tp').innerText = data.tp.toLocaleString();
-                document.getElementById('sl').innerText = data.sl.toLocaleString();
+        let priceHistory = [];
+        const WINDOW_SIZE = 8;
+
+        // الاتصال المباشر بالويب سوكت من المتصفح بدون سيرفر بايثون!
+        const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@ticker");
+
+        ws.onopen = () => {
+            document.getElementById('status').innerText = "متصل مباشر بالبورصة 🟢";
+            document.getElementById('status').style.color = "#0ecb81";
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            const currentPrice = parseFloat(data.c);
+            
+            // تحديث السعر على الشاشة
+            const priceElem = document.getElementById('price');
+            const oldPrice = parseFloat(priceElem.innerText.replace(/,/g, '')) || 0;
+            priceElem.innerText = currentPrice.toLocaleString('en-US', {minimumFractionDigits: 2});
+            
+            // وميض الألوان حسب الحركة
+            if (currentPrice > oldPrice) priceElem.style.color = '#0ecb81';
+            else if (currentPrice < oldPrice) priceElem.style.color = '#f6465d';
+
+            // حساب الخوارزمية الذكية للاتجاه والمخاطر
+            priceHistory.push(currentPrice);
+            if (priceHistory.length > WINDOW_SIZE) priceHistory.shift();
+
+            if (priceHistory.length === WINDOW_SIZE) {
+                const avgPrice = priceHistory.reduce((a, b) => a + b, 0) / priceHistory.length;
+                const riskPercentage = 0.01;
+                const rewardPercentage = 0.02;
                 
-                const badge = document.getElementById('badge');
-                badge.innerText = data.signal;
-                if(data.signal.includes('شراء')) badge.className = 'badge buy';
-                else if(data.signal.includes('بيع')) badge.className = 'badge sell';
-                else badge.className = 'badge';
-            } catch (e) {}
-        }
-        setInterval(refresh, 500);
+                let trend, signal, tp, sl;
+
+                if (currentPrice > avgPrice) {
+                    trend = "صاعد 📈";
+                    signal = "شراء (BUY) 🟢";
+                    sl = currentPrice * (1 - riskPercentage);
+                    tp = currentPrice * (1 + rewardPercentage);
+                    document.getElementById('badge').className = 'badge buy';
+                } else {
+                    trend = "هابط 📉";
+                    signal = "بيع (SELL) 🔴";
+                    sl = currentPrice * (1 + riskPercentage);
+                    tp = currentPrice * (1 - rewardPercentage);
+                    document.getElementById('badge').className = 'badge sell';
+                }
+
+                document.getElementById('trend').innerText = trend;
+                document.getElementById('badge').innerText = signal;
+                document.getElementById('tp').innerText = tp.toLocaleString('en-US', {minimumFractionDigits: 2});
+                document.getElementById('sl').innerText = sl.toLocaleString('en-US', {minimumFractionDigits: 2});
+            }
+        };
+
+        ws.onerror = () => {
+            document.getElementById('status').innerText = "خطأ في الاتصال 🔴";
+            document.getElementById('status').style.color = "#f6465d";
+        };
     </script>
 </body>
 </html>
-"""
-
-@app.route('/')
-def home():
-    return render_template_string(HTML_TEMPLATE)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
